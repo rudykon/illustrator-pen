@@ -1,0 +1,54 @@
+name: Publish assembled Cell-lct Local tree
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-cell-lct-tree.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote validated Git tree to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CURRENT_COMMIT: ${{ github.sha }}
+          VALIDATED_TREE: 449f06cf07b84062baf78a030be32c6263bcd8fd
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          commit_payload=$(jq -n \
+            --arg message "feat: publish local-first Illustrator vector reconstruction" \
+            --arg tree "$VALIDATED_TREE" \
+            --arg parent "$CURRENT_COMMIT" \
+            '{message: $message, tree: $tree, parents: [$parent]}')
+
+          commit_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/git/commits" \
+            --data "$commit_payload")
+
+          new_commit=$(jq -er '.sha' <<<"$commit_response")
+          new_tree=$(jq -er '.tree.sha' <<<"$commit_response")
+          test "$new_tree" = "$VALIDATED_TREE"
+
+          ref_payload=$(jq -n --arg sha "$new_commit" '{sha: $sha, force: false}')
+          curl --fail-with-body --silent --show-error \
+            --request PATCH \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/$REPOSITORY/git/refs/heads/main" \
+            --data "$ref_payload" >/dev/null
+
+          echo "Published tree $VALIDATED_TREE as commit $new_commit"
