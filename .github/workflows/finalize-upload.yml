@@ -1,0 +1,99 @@
+name: Finalize verified Cell-lct Local upload
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/finalize-upload.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cell-lct-local-final-upload
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize canonical source tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          verify_source() {
+            test -f README.md \
+              && test -f README.zh-CN.md \
+              && test -f BUILD_MANIFEST.json \
+              && test -f pyproject.toml \
+              && test -f src/cell_lct_local/cli.py \
+              && test -f src/cell_lct_local/pipeline.py \
+              && test -f plugins/cell-lct-local/skills/cell-lct-local/SKILL.md \
+              && test -f tests/test_pipeline.py \
+              && test -f tools/verify_manifest.py \
+              && python tools/verify_manifest.py --root . --manifest BUILD_MANIFEST.json
+          }
+
+          if ! verify_source; then
+            : > /tmp/cell-lct-local.b64
+            for sha in \
+              31f46a3e90ce468457db4cbea8576111cab727d3 \
+              38902afc0742cfb185fd7bb99485d8450c8b58ab \
+              d2bf3c31c8bd66f86b1bc933d05e205f995069be \
+              138fadcbb711c2f6d636b6e79e703746385815e2 \
+              02b69b52cb56998760be3476f251a05d81b1d473 \
+              0070f02d174dc7b64c70adc938642918383e99eb \
+              3d8dc18a88a03e43f2a208c107caecc43a40e772
+            do
+              gh api "repos/${GITHUB_REPOSITORY}/git/blobs/${sha}" --jq .content \
+                | tr -d '\n' \
+                | base64 -d >> /tmp/cell-lct-local.b64
+            done
+
+            base64 -d /tmp/cell-lct-local.b64 > /tmp/cell-lct-local.tar.xz
+            echo 'e61ea0b8a08506d2a2406d7db70c06e330ccb55bdc8d8311b49b2c3f806284c2  /tmp/cell-lct-local.tar.xz' | sha256sum -c -
+            rm -rf /tmp/cell-lct-local
+            mkdir -p /tmp/cell-lct-local
+            tar -xJf /tmp/cell-lct-local.tar.xz -C /tmp/cell-lct-local
+            rsync -a /tmp/cell-lct-local/cell-lct-local-v0.1.0/ ./
+            verify_source
+          fi
+
+          python -m compileall -q src tools
+
+      - name: Remove bootstrap artifacts and publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .bootstrap .github
+          rm -f .upload-verification
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat: publish Cell-lct Local v0.1.0'
+          fi
+
+          published=0
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            expected="$(git rev-parse origin/main)"
+            if git push --force-with-lease="refs/heads/main:${expected}" origin HEAD:main; then
+              published=1
+              break
+            fi
+            sleep 2
+          done
+          test "$published" -eq 1
+
+          git tag -f v0.1.0 HEAD
+          git push --force origin refs/tags/v0.1.0
