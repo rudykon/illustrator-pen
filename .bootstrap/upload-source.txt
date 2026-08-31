@@ -1,0 +1,1 @@
+The complete source archive is reconstructed from verified Git blobs by the bootstrap workflow.
