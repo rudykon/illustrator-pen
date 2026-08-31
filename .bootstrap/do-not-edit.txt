@@ -1,0 +1,1 @@
+Temporary bootstrap files are removed by GitHub Actions after source verification.
