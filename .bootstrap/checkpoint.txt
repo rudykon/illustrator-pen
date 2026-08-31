@@ -1,0 +1,1 @@
+all source object checksums are pinned in the bootstrap workflow
